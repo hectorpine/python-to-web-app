@@ -1,5 +1,6 @@
 
 # Setup Instructions
+LINK https://youtu.be/u8mpn7X7fE4
 
 ## Cloning the Repository
 
