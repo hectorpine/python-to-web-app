@@ -1,14 +1,35 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import os
 from simplegmail import Gmail
 from googleapiclient.errors import HttpError
 import base64
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+
+# Load environment variables
+load_dotenv()
+
+# Initialize FastAPI
+app = FastAPI()
 
 # Initialize the Gmail client
 gmail = Gmail()
 
+def get_message_body(payload):
+    body = ''
+    if 'parts' in payload:
+        for part in payload['parts']:
+            if part['mimeType'] == 'text/plain':
+                body += base64.urlsafe_b64decode(part['body'].get('data', '')).decode('utf-8')
+            elif part['mimeType'] == 'text/html':
+                body += base64.urlsafe_b64decode(part['body'].get('data', '')).decode('utf-8')
+    else:
+        body += base64.urlsafe_b64decode(payload['body'].get('data', '')).decode('utf-8')
+    return body
+
 def receive_recent_emails(max_results=10):
     try:
-        # Fetch the messages with the specified query
         response = gmail.service.users().messages().list(
             userId='me',
             labelIds=['INBOX'],
@@ -17,7 +38,6 @@ def receive_recent_emails(max_results=10):
         ).execute()
 
         messages = response.get('messages', [])
-        
         email_data = []
         for msg in messages:
             message = gmail.service.users().messages().get(
@@ -30,7 +50,7 @@ def receive_recent_emails(max_results=10):
                 "body": get_message_body(message['payload'])
             }
             email_data.append(email_info)
-            
+
             # Mark the email as read
             gmail.service.users().messages().modify(
                 userId='me',
@@ -47,41 +67,29 @@ def receive_recent_emails(max_results=10):
         print(f"An unexpected error occurred: {e}")
         return []
 
-def get_message_body(payload):
-    body = ''
-    if 'parts' in payload:
-        for part in payload['parts']:
-            if part['mimeType'] == 'text/plain':
-                body += base64.urlsafe_b64decode(part['body'].get('data', '')).decode('utf-8')
-            elif part['mimeType'] == 'text/html':
-                body += base64.urlsafe_b64decode(part['body'].get('data', '')).decode('utf-8')
-    else:
-        body += base64.urlsafe_b64decode(payload['body'].get('data', '')).decode('utf-8')
+class EmailRequest(BaseModel):
+    email_id: str
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Email Processing API"}
+
+@app.get("/emails/")
+def get_emails(max_results: int = 10):
+    emails = receive_recent_emails(max_results)
+    if not emails:
+        raise HTTPException(status_code=404, detail="No emails found")
+    return {"emails": emails}
+
+@app.post("/process-email/")
+def process_email(email: EmailRequest):
+    email_data = receive_recent_emails(max_results=1)  # Fetch one email for demo purposes
+    if not email_data:
+        raise HTTPException(status_code=404, detail="Email not found")
     
-    return body
-
-def process_emails(email_data):
-    # Example processing: Log email subjects
-    for email in email_data:
-        print(f"Processing email from {email['sender']}: {email['subject']}")
-        # Add your processing logic here
-
-def export_to_txt(subject, body, filename="draft.txt"):
-    try:
-        with open(filename, 'w') as file:
-            file.write(f"Subject: {subject}\n\n")
-            file.write(body)
-        print(f"Draft exported to {filename}")
-    except Exception as e:
-        print(f"An error occurred while writing to file: {e}")
-
-# Main function to integrate with CrewAI
-def main():
-    emails = receive_recent_emails(max_results=10)
-    process_emails(emails)
-    # Example: Export the first email processed to a text file
-    if emails:
-        export_to_txt(emails[0]['subject'], emails[0]['body'])
+    email_content = email_data[0]['body']
+    return {"email_content": email_content}
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
