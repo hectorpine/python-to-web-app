@@ -1,4 +1,4 @@
-```markdown
+
 # Setup Instructions
 
 ## Cloning the Repository
